@@ -45,12 +45,40 @@ added later without changing the command surface.
 
 ## Quick start
 
+Install without cloning this repo (macOS/Linux, needs `python3` and `docker`):
+
 ```bash
-scripts/install-plugin.sh        # symlinks the plugin into ~/.docker/cli-plugins
+curl -fsSL https://raw.githubusercontent.com/dei79/docker-compose-cutover/main/install.sh | bash
+```
+
+On Ubuntu/Debian, `packaging/deb/` builds a `.deb` instead - see
+[Packaging](#packaging) below. Already have this repo checked out?
+`scripts/install-plugin.sh` symlinks the plugin from your local checkout,
+which is more convenient while developing on the plugin itself.
+
+```bash
 cd your-compose-project          # a docker-compose.yml + .env, see below
 docker cutover doctor            # validate prerequisites
 docker cutover myapp:2.0.0       # switch to myapp:2.0.0 with zero downtime
 ```
+
+## Packaging
+
+Two ways to distribute the plugin without a git checkout:
+
+- **`install.sh`** (this file) - a curl-able installer for macOS/Linux. It
+  grabs the latest tagged release (or `main` if none exists yet) and installs
+  straight into `~/.docker/cli-plugins/`. No package manager involved.
+- **`packaging/deb/build.sh`** - builds a `docker-compose-cutover` `.deb` that
+  installs the same plugin into `/usr/lib/docker/cli-plugins/`, so it can be
+  installed with a plain `sudo apt-get install ./docker-compose-cutover_*.deb`
+  (no APT repo needed). `.github/workflows/release.yml` builds one
+  automatically and attaches it to a GitHub Release whenever a `vX.Y.Z` tag is
+  pushed.
+
+Both installers stamp the release version into the plugin's own metadata
+(`docker cutover docker-cli-plugin-metadata`), even though the checked-in
+source always shows `0.0.0-dev`.
 
 ## License
 
