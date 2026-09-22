@@ -1,0 +1,5 @@
+.env
+.deploy.lock/
+__pycache__/
+*.log
+.DS_Store

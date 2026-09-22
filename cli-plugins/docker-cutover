@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+"""docker-cutover - Docker CLI plugin for zero-downtime blue/green deployments.
+
+Install once:
+    scripts/install-plugin.sh
+(or manually: symlink/copy this file to ~/.docker/cli-plugins/docker-cutover
+and `chmod +x` it). Docker then exposes it as `docker cutover ...`.
+
+Run from the root of a docker-compose project that follows the blue/green
+layout documented in README.md:
+
+    docker cutover doctor          # validate prerequisites
+    docker cutover <image>:<tag>    # start the target slot and switch to it
+
+The implementation lives in the sibling `bgswitch` package (config, doctor,
+compose/nginx/health helpers, deploy orchestration, CLI argument parsing).
+"""
+
+import os
+import sys
+
+# stdout is block-buffered when not a tty (piped, logged, redirected); stderr
+# never is. Without this, status lines and error/rollback messages can appear
+# out of chronological order whenever output isn't a live terminal.
+sys.stdout.reconfigure(line_buffering=True)
+
+# Resolve symlinks so `bgswitch` is found next to this file's real location,
+# not next to whatever directory it was symlinked into (e.g. ~/.docker/cli-plugins).
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+
+from bgswitch.cli import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
