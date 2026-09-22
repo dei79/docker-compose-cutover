@@ -17,7 +17,9 @@ PLUGIN_COMMAND_PREFIX = "docker-"
 PLUGIN_METADATA = {
     "SchemaVersion": "0.1.0",
     "Vendor": "cutover",
-    "Version": "0.1.0",
+    # Patched to the real release tag by .github/workflows/release.yml before
+    # packaging; this checked-in value only shows up in unreleased/dev builds.
+    "Version": "0.0.0-dev",
     "ShortDescription": "Zero-downtime blue/green deploys for a docker compose project",
 }
 
