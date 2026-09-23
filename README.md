@@ -203,11 +203,12 @@ running, remove it (`rm -rf demo-deploy/.deploy.lock`) before deploying again.
 ## Try the included demo
 
 The rest of this document walks through the included demo app end-to-end,
-using `scripts/build.py` to build each version and `docker cutover` itself to
-switch between them. `.github/workflows/publish-demo-app.yml` also publishes
-the same app to `ghcr.io/<owner>/docker-compose-cutover-demo:1.0.0` and
-`:2.0.0` on every change to `demo-app/`, if you'd rather point `docker
-cutover`/`docker build` at those than build locally.
+switching between the published `ghcr.io/dei79/docker-compose-cutover-demo`
+images (kept in sync with `demo-app/` by
+`.github/workflows/publish-demo-app.yml`) and, where a synthetic or
+locally-built version is needed (steps 4b, 5, 6), `scripts/build.py`.
+`docker cutover` doesn't care where an image came from, so the two mix
+freely in the same project.
 
 ### 1. Prerequisites
 
@@ -223,15 +224,17 @@ scripts/install-plugin.sh
 
 ### 2. Start from a clean demo
 
-`scripts/reset-demo.sh` stops any running demo, (re)writes `demo-deploy/.env`
-and the NGINX upstream config, builds the image, and starts blue at the
-given image (default `bluegreen-demo:1.0.0`). It works the same way
-for the very first setup and for resetting later - there is nothing to do
-beforehand. Stop any deployment or traffic monitor before running it.
+`scripts/reset-demo.sh` stops any running demo (`docker cutover down --force`),
+(re)writes `demo-deploy/.env` and the NGINX upstream config, pulls the given
+image (default the published `ghcr.io/dei79/docker-compose-cutover-demo:1.0.0`,
+skipped if that reference is already built locally), and starts blue with
+`docker cutover up`. It works the same way for the very first setup and for
+resetting later - there is nothing to do beforehand. Stop any deployment or
+traffic monitor before running it.
 
 ```bash
-scripts/reset-demo.sh                            # blue bluegreen-demo:1.0.0
-scripts/reset-demo.sh bluegreen-demo:3.2.1  # or reset to a different starting version
+scripts/reset-demo.sh                            # blue ghcr.io/.../docker-compose-cutover-demo:1.0.0
+scripts/reset-demo.sh bluegreen-demo:3.2.1        # or reset to a locally built image instead
 ```
 
 It prints `scripts/status.py` at the end. Expected: blue is running and
@@ -257,20 +260,24 @@ during the deployments below. Stop with **Ctrl+C** to print the final counts.
 Expected: HTTP 200 on every line and `failures=0` in the final result.
 Any failed request is marked `!!! FAILED REQUEST !!!`.
 
-### 4. Build and deploy two updates
+### 4a. Deploy a published update
 
 In terminal 2:
 
 ```bash
-python3 scripts/build.py bluegreen-demo:2.0.0
-(cd demo-deploy && docker cutover bluegreen-demo:2.0.0)
+docker pull ghcr.io/dei79/docker-compose-cutover-demo:2.0.0
+(cd demo-deploy && docker cutover ghcr.io/dei79/docker-compose-cutover-demo:2.0.0)
 python3 scripts/status.py
 ```
 
 Expected: requests switch from blue `1.0.0` to green `2.0.0`. Blue stops only
 after the old NGINX workers exit and the final smoke test passes.
 
-Then deploy the next version:
+### 4b. Deploy a locally built update
+
+Steps 5 and 6 need versions that were never published, so build one locally
+and deploy it the same way - `docker cutover` doesn't care whether an image
+was pulled or built, only that it exists locally:
 
 ```bash
 python3 scripts/build.py bluegreen-demo:3.0.0
@@ -301,7 +308,7 @@ The traffic monitor continues returning HTTP 200.
 
 ### 6. Test worker draining and its timeout
 
-After step 4, build the next image:
+After step 4b, build the next image:
 
 ```bash
 python3 scripts/build.py bluegreen-demo:4.0.0
@@ -365,7 +372,7 @@ Stop the traffic monitor, finish any pending test request, and wait for any
 running deployment to finish. Then run:
 
 ```bash
-(cd demo-deploy && docker compose down)
+(cd demo-deploy && docker cutover down)
 ```
 
 The built images remain available. To repeat the test, start at step 2.

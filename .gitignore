@@ -4,3 +4,6 @@ __pycache__/
 *.log
 .DS_Store
 dist/
+# Runtime state rewritten by every deploy/reset, not source config;
+# reset-demo.sh (re)creates it, so a fresh checkout doesn't need it tracked.
+demo-deploy/nginx/conf.d/upstream.conf
