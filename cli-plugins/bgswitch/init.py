@@ -22,7 +22,11 @@ http {{
             proxy_set_header Host $host;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_connect_timeout 2s;
-            proxy_read_timeout 5s;
+            # Generous on purpose: a short timeout here turns an app that's
+            # merely slow to respond into a hard NGINX 502/504 during a
+            # deploy's health/verification probes. Tighten it if your app's
+            # own latency budget calls for it.
+            proxy_read_timeout 130s;
         }}
     }}
 }}
