@@ -9,11 +9,15 @@ and `chmod +x` it). Docker then exposes it as `docker cutover ...`.
 Run from the root of a docker-compose project that follows the blue/green
 layout documented in README.md:
 
-    docker cutover doctor          # validate prerequisites
-    docker cutover <image>:<tag>    # start the target slot and switch to it
+    docker cutover init <image>:<tag>   # scaffold a new project in the current directory
+    docker cutover up                   # start NGINX + whichever slot is currently active
+    docker cutover down                 # stop it (refuses mid-deploy unless --force)
+    docker cutover doctor               # validate prerequisites
+    docker cutover <image>:<tag>        # start the target slot and switch to it
 
 The implementation lives in the sibling `bgswitch` package (config, doctor,
-compose/nginx/health helpers, deploy orchestration, CLI argument parsing).
+init scaffolding, compose/nginx/health helpers, deploy orchestration, CLI
+argument parsing).
 """
 
 import os

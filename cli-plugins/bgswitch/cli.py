@@ -11,6 +11,9 @@ from .compose import parse_image_reference
 from .config import ConfigError, load_config
 from .deploy import deploy
 from .doctor import doctor
+from .down import down
+from .init import init
+from .up import up
 
 PLUGIN_COMMAND_PREFIX = "docker-"
 
@@ -53,6 +56,63 @@ def main(argv):
         )
         doctor_parser.parse_args(args[1:])
         return doctor(Path.cwd())
+
+    if args[:1] == ["init"]:
+        init_parser = argparse.ArgumentParser(
+            prog="docker cutover init",
+            description="Scaffold a new blue/green docker-compose project in the current directory.",
+        )
+        init_parser.add_argument("image", help="Initial image reference, e.g. myapp:1.0.0")
+        init_parser.add_argument(
+            "--port", type=int, default=8080,
+            help="Port NGINX and the app listen on (default: 8080)",
+        )
+        init_parser.add_argument(
+            "--force", action="store_true",
+            help="Overwrite an existing docker-compose.yml/.env/nginx/ in this directory",
+        )
+        init_args = init_parser.parse_args(args[1:])
+        try:
+            return init(Path.cwd(), init_args.image, init_args.port, init_args.force)
+        except (ValueError, RuntimeError) as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 1
+
+    if args[:1] == ["up"]:
+        up_parser = argparse.ArgumentParser(
+            prog="docker cutover up",
+            description="Start NGINX and whichever slot the upstream config currently points at "
+                        "(never both), e.g. after `docker cutover init` or `docker compose down`.",
+        )
+        up_parser.parse_args(args[1:])
+        root = Path.cwd()
+        try:
+            config = load_config(root)
+        except ConfigError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 1
+        try:
+            return up(root, config)
+        except Exception as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 1
+
+    if args[:1] == ["down"]:
+        down_parser = argparse.ArgumentParser(
+            prog="docker cutover down",
+            description="Stop and remove this project's containers "
+                        "(refuses while a deployment looks like it's in progress).",
+        )
+        down_parser.add_argument(
+            "--force", action="store_true",
+            help="Tear down even if a .deploy.lock looks like a deployment is in progress",
+        )
+        down_args = down_parser.parse_args(args[1:])
+        try:
+            return down(Path.cwd(), down_args.force)
+        except Exception as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 1
 
     parser = argparse.ArgumentParser(
         prog="docker cutover",

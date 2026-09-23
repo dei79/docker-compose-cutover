@@ -105,6 +105,51 @@ need to be run from inside `demo-deploy/`.
 
 ## Using `docker cutover` in your own project
 
+### Starting a new project
+
+`docker cutover init <image>:<tag>` scaffolds a `docker-compose.yml`, `.env`
+and `nginx/` for a blue/green setup in the current directory - no need to
+hand-copy `demo-deploy/`:
+
+```bash
+mkdir my-project && cd my-project
+docker cutover init myapp:1.0.0        # --port 8080 by default, --force to overwrite
+```
+
+It only writes files; nothing is started automatically. It refuses to run if
+`docker-compose.yml`, `.env` or `nginx/` already exist (unless `--force`).
+Review the generated healthcheck (it assumes `wget` is available in the
+image) and see **Health contract** below before your first deploy.
+
+Start it with `docker cutover up` rather than a plain `docker compose up -d`:
+the compose file defines both slots, so a plain `up -d` would start both at
+once, which breaks the "only one slot running" invariant. `docker cutover up`
+reads which slot `nginx/conf.d/upstream.conf` currently points at (`blue`
+right after `init`) and starts only NGINX plus that one - the same command
+also works to resume after a `docker compose down`, whichever slot was last
+active.
+
+Stop it with `docker cutover down` rather than a plain `docker compose down`:
+it refuses (unless `--force`) while a `.deploy.lock` suggests a deployment is
+in progress, so you don't tear down containers mid-switch.
+
+### Health contract
+
+For a switch to verify the new slot is really serving the new version before
+stopping the old one, your app's health endpoint must return JSON:
+
+```json
+{"slot": "blue", "version": "1.0.0", "hostname": "anything-non-empty"}
+```
+
+`slot` and `version` are matched exactly against what's being deployed;
+`hostname` just has to be present. This is the same contract `demo-app/`
+implements (see `demo-app/server.py`) - an app that doesn't already return
+this shape needs a small adapter or endpoint added before `docker cutover`
+can deploy it with verification.
+
+### Deploying
+
 From the root of a blue/green project (a `docker-compose.yml` plus an `.env`
 with the keys below):
 
