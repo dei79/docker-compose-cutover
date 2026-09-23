@@ -1,114 +1,55 @@
 # cutover
 
-Zero-downtime deployments for `docker compose` projects.
-
-`cutover` is a Docker CLI plugin that switches a compose service between two
-running versions - blue and green - without dropping a single request. It
-starts the new version, waits for it to become healthy, verifies it serves
-real traffic through NGINX, switches NGINX to it, drains the old version's
-in-flight requests, and only then stops it. If anything goes wrong along the
-way, it rolls back automatically and leaves both versions running.
-
-## Why
-
-Most teams end up hand-rolling this exact sequence as a pile of shell and
-`docker compose` calls: bring up the new container, poke it until it's
-healthy, flip an NGINX upstream, hope nothing was mid-request, stop the old
-one. `cutover` packages that sequence once, safely, as a reusable plugin -
-so `docker cutover <image>:<tag>` replaces the bespoke script.
-
-## What you get
-
-- **`docker cutover doctor`** - validates a project before you ever deploy:
-  compose file present, Docker reachable, `.env` has the required keys, the
-  NGINX upstream config exists and points at exactly one slot, no stale lock
-  left over from a crash.
-- **Zero-downtime switches** - the old version keeps serving in-flight
-  requests until they finish (configurable drain timeout), and NGINX is
-  reloaded, never restarted.
-- **Safe by construction** - a deployment lock rejects overlapping runs, any
-  failure triggers an automatic rollback to the previous upstream, and exit
-  codes are precise: `0` success, `1` failure, `2` drain timed out (old
-  version deliberately left running, nothing was stopped).
-- **Crash-safe** - containers use `restart: unless-stopped`, so a reboot
-  brings back exactly what was running before, not what was already stopped;
-  `doctor` flags a stale lock left over from a mid-deploy crash.
-- **No lock-in to one app or one image** - the target is any full Docker
-  image reference (`name:tag`, `namespace/repo:tag`, even a different
-  registry/namespace entirely), and NGINX paths, service names, ports and the
-  reload command are all read from `.env`, not hardcoded.
-- **Zero dependencies** - a single, self-contained Python (stdlib-only)
-  script; nothing to install beyond `python3` and `docker` itself.
-
-Blue/green is the first switch strategy; the plugin is built so more can be
-added later without changing the command surface.
+`cutover` is a Docker CLI plugin for zero-downtime blue/green deploys of
+`docker compose` projects. It starts the new version, verifies it over real
+traffic, and switches NGINX to it, draining the old version's in-flight
+requests before stopping it. If any step fails, it rolls back automatically
+and leaves both versions running.
 
 ## Quick start
 
-New here? [GETTING_STARTED.md](GETTING_STARTED.md) walks through install +
-running a first project against the published demo image in under five
-minutes. The rest of this section is the same install step plus a quicker,
-less guided version.
-
-Install without cloning this repo (macOS/Linux, needs `python3` and `docker`):
+Install (macOS/Linux, no repo checkout needed):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dei79/docker-compose-cutover/main/install.sh | bash
 ```
 
-On Ubuntu/Debian, `packaging/deb/` builds a `.deb` instead - see
-[Packaging](#packaging) below. Already have this repo checked out?
-`scripts/install-plugin.sh` symlinks the plugin from your local checkout,
-which is more convenient while developing on the plugin itself.
+Ubuntu/Debian and want a real package instead? See
+[Building](#building) for the `.deb`.
+
+Then try it against the published demo image - no local build required:
 
 ```bash
-cd your-compose-project          # a docker-compose.yml + .env, see below
-docker cutover doctor            # validate prerequisites
-docker cutover myapp:2.0.0       # switch to myapp:2.0.0 with zero downtime
+mkdir my-project && cd my-project
+docker cutover init ghcr.io/dei79/docker-compose-cutover-demo:1.0.0
+docker pull ghcr.io/dei79/docker-compose-cutover-demo:1.0.0
+docker cutover up
+curl http://localhost:8080/health
 ```
 
-## Packaging
+Expected: `{"service": "demo-service", "version": "1.0.0", "slot": "blue", ...}`.
+Open `http://localhost:8080/` for a small page showing the same thing live.
 
-Two ways to distribute the plugin without a git checkout:
+Deploy an update with zero downtime:
 
-- **`install.sh`** (this file) - a curl-able installer for macOS/Linux. It
-  grabs the latest tagged release (or `main` if none exists yet) and installs
-  straight into `~/.docker/cli-plugins/`. No package manager involved.
-- **`packaging/deb/build.sh`** - builds a `docker-compose-cutover` `.deb` that
-  installs the same plugin into `/usr/lib/docker/cli-plugins/`, so it can be
-  installed with a plain `sudo apt-get install ./docker-compose-cutover_*.deb`
-  (no APT repo needed). `.github/workflows/release.yml` builds one
-  automatically and attaches it to a GitHub Release whenever a `vX.Y.Z` tag is
-  pushed.
-
-Both installers stamp the release version into the plugin's own metadata
-(`docker cutover docker-cli-plugin-metadata`), even though the checked-in
-source always shows `0.0.0-dev`.
-
-## License
-
-MIT, see [LICENSE](LICENSE).
-
----
-
-## Layout
-
-```
-demo-deploy/   docker-compose.yml, .env, nginx/  - the project docker cutover operates on
-demo-app/      Dockerfile, server.py             - the demo application that gets built into images
-cli-plugins/   the docker-cutover CLI plugin
-scripts/       reset-demo.sh, build.py, plus the original deploy.py/status.py for manual testing
+```bash
+docker pull ghcr.io/dei79/docker-compose-cutover-demo:2.0.0
+docker cutover ghcr.io/dei79/docker-compose-cutover-demo:2.0.0
+curl http://localhost:8080/health
 ```
 
-`demo-deploy/` and `demo-app/` are deliberately separate: `docker cutover` only ever
-needs the former (any compose project following this layout works, not just this
-demo app), and building a new image only ever needs the latter.
+Expected: `"version": "2.0.0", "slot": "green"` - traffic switched with zero
+dropped requests, and blue was stopped automatically once it had no
+in-flight requests left. Stop everything with:
 
-The `python3 scripts/*.py` and `scripts/*.sh` helpers below can be run from
-anywhere (they resolve their own paths); plain `docker compose ...` commands
-need to be run from inside `demo-deploy/`.
+```bash
+docker cutover down
+```
 
-## Using `docker cutover` in your own project
+(`GETTING_STARTED.md` walks through the same four commands with more
+explanation if any of that felt rushed.)
+
+## Configuration
 
 ### Starting a new project
 
@@ -117,7 +58,6 @@ and `nginx/` for a blue/green setup in the current directory - no need to
 hand-copy `demo-deploy/`:
 
 ```bash
-mkdir my-project && cd my-project
 docker cutover init myapp:1.0.0        # --port 8080 by default, --force to overwrite
 ```
 
@@ -125,18 +65,60 @@ It only writes files; nothing is started automatically. It refuses to run if
 `docker-compose.yml`, `.env` or `nginx/` already exist (unless `--force`).
 Review the generated healthcheck (it assumes `wget` is available in the
 image) and see **Health contract** below before your first deploy.
+`docker cutover` itself never pulls or builds images, so pull or build the
+initial one before starting - see **Deploying updates** below.
 
-Start it with `docker cutover up` rather than a plain `docker compose up -d`:
+### Starting and stopping
+
+Use `docker cutover up`/`down` rather than plain `docker compose up -d`/`down`:
 the compose file defines both slots, so a plain `up -d` would start both at
-once, which breaks the "only one slot running" invariant. `docker cutover up`
-reads which slot `nginx/conf.d/upstream.conf` currently points at (`blue`
-right after `init`) and starts only NGINX plus that one - the same command
-also works to resume after a `docker compose down`, whichever slot was last
-active.
+once, breaking the "only one slot running" invariant. `up` reads which slot
+`nginx/conf.d/upstream.conf` currently points at (`blue` right after `init`)
+and starts only NGINX plus that one; the same command resumes correctly
+after a `down`, whichever slot was last active. `down` refuses (unless
+`--force`) while a `.deploy.lock` suggests a deployment is in progress, so
+you don't tear down containers mid-switch.
 
-Stop it with `docker cutover down` rather than a plain `docker compose down`:
-it refuses (unless `--force`) while a `.deploy.lock` suggests a deployment is
-in progress, so you don't tear down containers mid-switch.
+### Deploying updates
+
+From the root of a blue/green project (a `docker-compose.yml` plus an `.env`
+with the keys below):
+
+```bash
+docker cutover doctor                   # validate prerequisites, see below
+docker cutover myapp:2.0.0              # start the target slot, switch NGINX, stop the old slot
+```
+
+The argument is a full Docker image reference (`docker cutover` parses it the
+same way `docker` itself does): `NAME:TAG`, `namespace/repo:tag`, or
+`registry.example.com:5000/namespace/repo:tag`. This lets one project switch
+to a different image namespace entirely, not just a new tag of the same
+image. `docker cutover` never builds or pulls images itself - the target
+must already exist locally (`docker pull`/`docker build` it first).
+
+Exit codes are precise: `0` success, `1` failure (rolled back automatically,
+both versions still running), `2` the old slot's in-flight requests didn't
+drain in time (`--drain-timeout`, default 60s) - nothing was stopped, retry
+once it's actually idle.
+
+`doctor` checks: a docker-compose file exists, the Docker daemon is
+reachable, `docker compose config` is valid, `.env` exists, `.env` sets
+these required keys, and there is no stale `.deploy.lock` left over from a
+crashed deployment:
+
+| Key | Meaning |
+| --- | --- |
+| `BLUE_VERSION` / `GREEN_VERSION` | Current image tag for each slot (compose reads these) |
+| `NGINX_UPSTREAM_CONF` | Path (relative to the project root) to the upstream config `docker cutover` rewrites |
+| `NGINX_RELOAD_CMD` | Command run inside the NGINX container to hot-reload, e.g. `nginx -s reload` |
+
+`docker cutover` also persists `BLUE_IMAGE`/`GREEN_IMAGE` in `.env` (the image
+name without its tag) once you've deployed at least one image to that slot.
+
+Everything else has a default matching the demo (`NGINX_SERVICE=nginx`,
+`NGINX_TEST_CMD=nginx -t`, `APP_SERVICE_PREFIX=app`, `APP_PORT=8080`,
+`PUBLIC_URL`, `DRAIN_TIMEOUT=60`) and can be overridden in `.env` if a
+project's naming differs. `doctor` reports which ones are defaulted.
 
 ### Health contract
 
@@ -153,81 +135,102 @@ implements (see `demo-app/server.py`) - an app that doesn't already return
 this shape needs a small adapter or endpoint added before `docker cutover`
 can deploy it with verification.
 
-### Deploying
-
-From the root of a blue/green project (a `docker-compose.yml` plus an `.env`
-with the keys below):
-
-```bash
-cd demo-deploy
-docker cutover doctor                   # validate prerequisites, see below
-docker cutover bluegreen-demo:2.0.0     # start the target slot, switch NGINX, stop the old slot
-```
-
-The argument is a full Docker image reference (`docker cutover` parses it the
-same way `docker` itself does): `NAME:TAG`, or `namespace/repo:tag`, or
-`registry.example.com:5000/namespace/repo:tag`. This lets one project switch
-to a different image namespace entirely, not just a new tag of the same
-image, e.g. `docker cutover acme/webshop:v1.0.0`.
-
-`doctor` checks: a docker-compose file exists, the Docker daemon is
-reachable, `docker compose config` is valid, `.env` exists, `.env` sets
-these required keys, and there is no stale `.deploy.lock` left over from a
-crashed deployment:
-
-| Key | Meaning |
-| --- | --- |
-| `BLUE_VERSION` / `GREEN_VERSION` | Current image tag for each slot (compose reads these) |
-| `NGINX_UPSTREAM_CONF` | Path (relative to the project root) to the upstream config `docker cutover` rewrites |
-| `NGINX_RELOAD_CMD` | Command run inside the NGINX container to hot-reload, e.g. `nginx -s reload` |
-
-`docker cutover` also persists `BLUE_IMAGE`/`GREEN_IMAGE` in `.env` (the image
-name without its tag) once you've deployed at least one image to that slot;
-`docker-compose.yml` falls back to `bluegreen-demo` for a slot that has
-never been deployed to.
-
-Everything else has a default matching this demo (`NGINX_SERVICE=nginx`,
-`NGINX_TEST_CMD=nginx -t`, `APP_SERVICE_PREFIX=app`, `APP_PORT=8080`,
-`PUBLIC_URL`, `DRAIN_TIMEOUT=60`) and can be overridden in `.env` if a
-project's naming differs. `doctor` reports which ones are defaulted.
-
 ### Restart after a crash or power loss
 
-Every service in `docker-compose.yml` uses `restart: unless-stopped`. Docker
-remembers which containers were *explicitly* stopped (the old slot, via
-`docker cutover`'s own `compose stop`) and will not restart those, but will
-restart whatever was actually running - so after the Docker daemon or the
-whole host comes back up, exactly the container that was active before the
-outage comes back, and the previously-stopped slot stays stopped. There is
-nothing to run manually.
+Every service in a `docker cutover init`-generated (or `demo-deploy/`)
+`docker-compose.yml` uses `restart: unless-stopped`. Docker remembers which
+containers were *explicitly* stopped (the old slot, via `docker cutover`'s
+own `compose stop`) and won't restart those, but will restart whatever was
+actually running - so after the Docker daemon or the whole host comes back
+up, exactly the container that was active before the outage comes back, and
+the previously-stopped slot stays stopped. There is nothing to run manually.
 
 If the outage happens mid-deployment, a `.deploy.lock` directory can be left
 behind; `docker cutover doctor` flags this. If no deployment is actually
-running, remove it (`rm -rf demo-deploy/.deploy.lock`) before deploying again.
+running, remove it (`rm -rf <project>/.deploy.lock`) before deploying again.
 
-## Try the included demo
+## Building
 
-The rest of this document walks through the included demo app end-to-end,
-switching between the published `ghcr.io/dei79/docker-compose-cutover-demo`
-images (kept in sync with `demo-app/` by
-`.github/workflows/publish-demo-app.yml`) and, where a synthetic or
-locally-built version is needed (steps 4b, 5, 6), `scripts/build.py`.
-`docker cutover` doesn't care where an image came from, so the two mix
-freely in the same project.
+### Layout
 
-### 1. Prerequisites
+```
+cli-plugins/       the docker-cutover CLI plugin (entrypoint + bgswitch/ package)
+demo-app/          Dockerfile, server.py - the demo application published to GHCR
+demo-deploy/       docker-compose.yml, nginx/ - a hand-maintained example project for demo-app
+scripts/           install-plugin.sh (local dev), reset-demo.sh, build.py, status.py, test-zero-downtime.py
+packaging/deb/     builds the docker-compose-cutover .deb
+install.sh         curl-installable installer (see Quick start)
+.github/workflows/ release.yml (tag -> GitHub Release + .deb), publish-demo-app.yml (demo-app -> GHCR)
+```
 
-Use macOS with Docker Desktop and Python 3 installed. No pip packages are required.
+`demo-deploy/` and `demo-app/` are deliberately separate: `docker cutover`
+only ever needs the former (any compose project following this layout
+works, not just this demo app), and building a new image only ever needs
+the latter.
+
+### Installers
+
+Two ways to distribute the plugin without a git checkout, both documented in
+**Quick start** above:
+
+- **`install.sh`** - a curl-able installer for macOS/Linux. It grabs the
+  latest tagged release (or `main` if none exists yet), installs it into a
+  versioned directory under `~/.docker/cutover/versions/`, and points
+  `~/.docker/cli-plugins/docker-cutover` at it with a symlink - safe to
+  re-run even if something else (this repo's own `scripts/install-plugin.sh`,
+  or a previous run) already left a symlink or file there.
+- **`packaging/deb/build.sh`** - builds a `docker-compose-cutover` `.deb`
+  that installs the same plugin into `/usr/lib/docker/cli-plugins/`, so it
+  can be installed with a plain
+  `sudo apt-get install ./docker-compose-cutover_*.deb` (no APT repo needed).
+
+Both stamp the release version into the plugin's own metadata (visible via
+`docker cutover docker-cli-plugin-metadata`), even though the checked-in
+source always shows `0.0.0-dev`.
+
+### Releasing
+
+Pushing a `vX.Y.Z` tag triggers `.github/workflows/release.yml`: it derives
+the version from the tag, stamps it into the plugin, builds the `.deb`, and
+attaches it to a new GitHub Release.
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+### Publishing the demo image
+
+`.github/workflows/publish-demo-app.yml` builds and pushes
+`ghcr.io/dei79/docker-compose-cutover-demo:1.0.0` and `:2.0.0` to GHCR
+whenever `demo-app/` changes (or on manual dispatch) - both tags always
+contain the current `demo-app/` code, just built with a different `VERSION`
+build-arg, which is all the demo needs to tell the two apart.
+
+## Contributing
+
+Clone the repo and install the plugin as a symlink instead of a copy, so
+edits under `cli-plugins/` take effect immediately:
+
+```bash
+git clone https://github.com/dei79/docker-compose-cutover.git
+cd docker-compose-cutover
+scripts/install-plugin.sh
+```
+
+The included demo is the manual test suite for changes to the plugin. It
+walks through the exact same commands end users run, but against
+`demo-deploy/` and (mostly) locally-built images, so you can watch every
+exit code and edge case up close.
+
+#### 1. Prerequisites
 
 ```bash
 open -a Docker
 python3 --version
-# Continue once Docker Desktop is ready:
 docker info
-scripts/install-plugin.sh
 ```
 
-### 2. Start from a clean demo
+#### 2. Start from a clean demo
 
 `scripts/reset-demo.sh` stops any running demo (`docker cutover down --force`),
 (re)writes `demo-deploy/.env` and the NGINX upstream config, pulls the given
@@ -251,7 +254,7 @@ curl http://localhost:8080/health
 open http://localhost:8080/          # small web page, refreshes slot/version every 2.5s
 ```
 
-### 3. Send requests continuously
+#### 3. Send requests continuously
 
 In terminal 1:
 
@@ -265,7 +268,7 @@ during the deployments below. Stop with **Ctrl+C** to print the final counts.
 Expected: HTTP 200 on every line and `failures=0` in the final result.
 Any failed request is marked `!!! FAILED REQUEST !!!`.
 
-### 4a. Deploy a published update
+#### 4a. Deploy a published update
 
 In terminal 2:
 
@@ -278,7 +281,7 @@ python3 scripts/status.py
 Expected: requests switch from blue `1.0.0` to green `2.0.0`. Blue stops only
 after the old NGINX workers exit and the final smoke test passes.
 
-### 4b. Deploy a locally built update
+#### 4b. Deploy a locally built update
 
 Steps 5 and 6 need versions that were never published, so build one locally
 and deploy it the same way - `docker cutover` doesn't care whether an image
@@ -296,7 +299,7 @@ two releases.
 
 Build each version before deploying it. Deployment does not build or pull images.
 
-### 5. Test a missing image
+#### 5. Test a missing image
 
 Use a unique version that has never been built:
 
@@ -311,7 +314,7 @@ Expected: exit code `1` and an error telling you to build the image first.
 The active slot, configuration and existing containers remain unchanged.
 The traffic monitor continues returning HTTP 200.
 
-### 6. Test worker draining and its timeout
+#### 6. Test worker draining and its timeout
 
 After step 4b, build the next image:
 
@@ -357,7 +360,7 @@ To test successful draining instead, repeat from step 2 and use
 `--drain-timeout 60` in this test. Expected: deployment waits until terminal 3's
 request finishes, then stops blue and exits with code `0`.
 
-### Inspect results and logs
+#### Inspect results and logs
 
 ```bash
 python3 scripts/status.py
@@ -371,7 +374,7 @@ docker compose exec nginx ps -o pid,args
 
 Use **Ctrl+C** to stop following logs.
 
-### Stop the demo
+#### Stop the demo
 
 Stop the traffic monitor, finish any pending test request, and wait for any
 running deployment to finish. Then run:
@@ -381,3 +384,7 @@ running deployment to finish. Then run:
 ```
 
 The built images remain available. To repeat the test, start at step 2.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
