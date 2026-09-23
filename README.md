@@ -204,7 +204,10 @@ running, remove it (`rm -rf demo-deploy/.deploy.lock`) before deploying again.
 
 The rest of this document walks through the included demo app end-to-end,
 using `scripts/build.py` to build each version and `docker cutover` itself to
-switch between them.
+switch between them. `.github/workflows/publish-demo-app.yml` also publishes
+the same app to `ghcr.io/<owner>/docker-compose-cutover-demo:1.0.0` and
+`:2.0.0` on every change to `demo-app/`, if you'd rather point `docker
+cutover`/`docker build` at those than build locally.
 
 ### 1. Prerequisites
 
