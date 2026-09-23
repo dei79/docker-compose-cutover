@@ -45,6 +45,11 @@ added later without changing the command surface.
 
 ## Quick start
 
+New here? [GETTING_STARTED.md](GETTING_STARTED.md) walks through install +
+running a first project against the published demo image in under five
+minutes. The rest of this section is the same install step plus a quicker,
+less guided version.
+
 Install without cloning this repo (macOS/Linux, needs `python3` and `docker`):
 
 ```bash
